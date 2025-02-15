@@ -1,0 +1,1985 @@
+---
+title: "SCCG analysis of Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2"
+output: html_document
+date: "2025-01-31"
+---
+Import required packages to filter the output dataframes from the genome editing pipeline
+```{r}
+library(tidyr)
+library(tidyverse)
+#library(xlsx)
+library("openxlsx")
+```
+
+
+_How many cells has on target editing in BRCA2?_
+```{r}
+#BRCA2
+BRCA2 <- read.csv2("Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2_BRCA2.txt", sep = ",")
+
+#rename the alleles with the amplicon target
+BRCA2 <- rename(BRCA2, "allele1_BRCA2" = allele1)
+BRCA2 <- rename(BRCA2, "allele2_BRCA2" = allele2)
+
+
+#remove the cell ID column
+df <- cbind(BRCA2 %>% select(-X))
+
+#remove all the cells that have at least one allele that didn't pass QC (thus, variant called as [None])
+df <- df %>% filter(allele1_BRCA2 != "[None]") %>% filter(allele2_BRCA2 != "[None]")
+
+#count all unique combinations of varients on the BRCA2 loci
+df <- df %>% group_by(allele1_BRCA2, allele2_BRCA2) %>% count(allele1_BRCA2, allele2_BRCA2, sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+df <- df %>% filter(allele1_BRCA2 == "['chr13:32326553:GAT/G']" | allele2_BRCA2 == "['chr13:32326553:GAT/G']")
+
+#select all BRCA2-del / BRCA2-LOH cells
+df_BRCA2_LOH <- df %>% filter(allele1_BRCA2 == "['chr13:32326556:A/T', 'chr13:32326557:T/A']" | allele2_BRCA2 == "['chr13:32326556:A/T', 'chr13:32326557:T/A']")
+
+#select all BRCA2-del / BRCA2-WT1 cells
+df_BRCA2_WT1 <- df %>% filter(allele1_BRCA2 == "['chr13:32326555:T/C']" | allele2_BRCA2 == "['chr13:32326555:T/C']")
+
+#select all BRCA2-del / BRCA2-WT2 cells
+df_BRCA2_WT2 <- df %>% filter(allele1_BRCA2 == "['chr13:32326561:T/C']" | allele2_BRCA2 == "['chr13:32326561:T/C']")
+
+#select all BRCA2-del / BRCA2-indel
+#firstly identify insertions
+df_BRCA2_insertion <- df %>%
+    rowwise() %>%
+    mutate(
+      # Extract the part containing "chr13:32326558" or "chr13:32326559" from allele1_BRAC2
+      allele1_BRCA2_chr1 = str_extract(allele1_BRCA2, "chr13:(32326558|32326559):[A-Z/]+"),
+      # Extract the part containing "chr13:32326558" or "chr13:32326559"  from allele2_BRCA2
+      allele2_BRCA2_chr1 = str_extract(allele2_BRCA2, "chr13:(32326558|32326559):[A-Z/]+"),
+      
+      # Calculate the difference for allele1_BRCA2 only if "chr1:32326558" or "chr1:32326559" exists
+      len_diff_allele1 = if_else(!is.na(allele1_BRCA2_chr1),
+                                 nchar(str_extract(allele1_BRCA2_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                                 nchar(str_extract(allele1_BRCA2_chr1, "(?<=/)[A-Z]+")),
+                                 0),  # Set to NA if neither position is present
+      
+      # Calculate the difference for allele1_BRCA2 only if "chr1:32326558" or "chr1:32326559" exists
+      len_diff_allele2 = if_else(!is.na(allele2_BRCA2_chr1),
+                                 nchar(str_extract(allele2_BRCA2_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                                 nchar(str_extract(allele2_BRCA2_chr1, "(?<=/)[A-Z]+")),
+                                 0),  # Set to NA if neither position is present
+      
+      # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+    ungroup() %>% filter(insertion == T) %>% select(c("allele1_BRCA2", "allele2_BRCA2", "n"))
+
+#count number of deletions spanning "chr13:32326558" or "chr13:32326559"
+df_BRCA2_deletion <- df %>%  mutate(# Calculate the difference in bases on allele1_BRCA2 after editing
+      len_diff_allele1 = if_else(!is.na(allele1_BRCA2),
+                                 nchar(str_extract(allele1_BRCA2, "(?<=:)[A-Z]+(?=/)")) - 
+                                 nchar(str_extract(allele1_BRCA2, "(?<=/)[A-Z]+")),
+                                 0),  # Set to NA if neither position is present
+      
+      # Calculate the difference in bases on allele2_BRCA2 after editing
+      len_diff_allele2 = if_else(!is.na(allele2_BRCA2),
+                                 nchar(str_extract(allele2_BRCA2, "(?<=:)[A-Z]+(?=/)")) - 
+                                 nchar(str_extract(allele2_BRCA2, "(?<=/)[A-Z]+")),
+                                 NA),  # Set to NA if neither position is present
+      
+      # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+    mutate(position_allele1_start = str_extract(allele1_BRCA2, "(?<=chr13:)\\d+")) %>% 
+    mutate(position_allele2_start = str_extract(allele2_BRCA2, "(?<=chr13:)\\d+")) %>% 
+    transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+    transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+    mutate(
+      allele1_deletion_spans = (position_allele1_start <= 32326558 & position_allele1_end >= 32326558 | position_allele1_start <= 32326559 & position_allele1_end >= 32326559),
+      allele2_deletion_spans = (position_allele2_start <= 32326558 & position_allele2_end >= 32326558 | position_allele2_start <= 32326559 & position_allele2_end >= 32326559)
+    ) %>% filter(allele1_deletion_spans == T | allele2_deletion_spans == T) %>% select(c("allele1_BRCA2", "allele2_BRCA2", "n"))
+
+  #bind the dataframes together to get the indels
+df_BRCA2_indels <- rbind(df_BRCA2_insertion, df_BRCA2_deletion)
+
+#create dataframe with all BRCA2 on site editing
+df_BRCA2_on_target <- rbind(df_BRCA2_LOH, df_BRCA2_WT1, df_BRCA2_WT2, df_BRCA2_indels)
+
+#make unique to make sure same cells are not counted multiple times
+df_BRCA2_on_target <- unique(df_BRCA2_on_target[,c('allele1_BRCA2','allele2_BRCA2', 'n')])
+
+#export all as Excels
+write.xlsx(df_BRCA2_on_target, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/BRCA2_on_target_editing.xlsx")
+write.xlsx(df_BRCA2_LOH, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/BRCA2_LOH_on_target_editing.xlsx")
+write.xlsx(df_BRCA2_WT1, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/BRCA2_WT1_on_target_editing.xlsx")
+write.xlsx(df_BRCA2_WT2, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/BRCA2_WT2_on_target_editing.xlsx")
+write.xlsx(df_BRCA2_indels, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/BRCA2_indel_on_target_editing.xlsx")
+```
+
+_How many cells has on target editing in PARP1?_
+```{r}
+#BRCA2
+BRCA2 <- read.csv2("Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2_BRCA2.txt", sep = ",")
+
+#PRAP1
+PARP1 <- read.csv2("Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2_PARP1.txt", sep = ",")
+
+#rename the alleles with the amplicon target
+BRCA2 <- rename(BRCA2, "allele1_BRCA2" = allele1)
+BRCA2 <- rename(BRCA2, "allele2_BRCA2" = allele2)
+PARP1 <- rename(PARP1, "allele1_PARP1" = allele1)
+PARP1 <- rename(PARP1, "allele2_PARP1" = allele2)
+
+#combine the dataframes into one, containing information of both variants for each cell
+df <- cbind(BRCA2, PARP1) %>% select(-X)
+
+#remove all the cells that has one allele that didn't pass QC (thus, variant called as [None])
+df <- df %>% filter(allele1_BRCA2 != "[None]") %>% filter(allele2_BRCA2 != "[None]") %>% filter(allele1_PARP1 != "[None]") %>% filter(allele2_PARP1 != "[None]")
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+df <- df %>% filter(allele1_BRCA2 == "['chr13:32326553:GAT/G']" | allele2_BRCA2 == "['chr13:32326553:GAT/G']")
+
+#remove the BRCA2 columns, focusing only on PARP1 variants
+df <- df %>% select(c(allele1_PARP1, allele2_PARP1))
+
+#count all unique combinations of variants on the  PARP1 loci
+df <- df %>% group_by(allele1_PARP1, allele2_PARP1) %>% count(allele1_PARP1, allele2_PARP1, sort = T)
+
+#select cells with at least one PARP1 LOH
+df_PARP1_LOH <- df %>% filter(allele1_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']" | allele2_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']")
+
+#select cells with at least one PARP1 WT1
+df_PARP1_WT1 <- df %>% filter(allele1_PARP1 == "['chr1:226402368:A/G']" | allele2_PARP1 == "['chr1:226402368:A/G']")
+
+#select cells with at least one PARP1 WT2
+df_PARP1_WT2 <- df %>% filter(allele1_PARP1 == "['chr1:226402365:A/G']" | allele2_PARP1 == "['chr1:226402365:A/G']")
+
+#select cells with PARP1 indels
+#firstly identify insertions
+  df_PARP1_insertion <- df %>%
+    rowwise() %>%
+    mutate(
+      # Extract the part containing "chr1:226402370" or "chr1:226402371" from allele1_PARP1
+      allele1_PARP1_chr1 = str_extract(allele1_PARP1, "chr1:(226402370|226402371):[A-Z/]+"),
+      # Extract the part containing "chr1:226402370" or "chr1:226402371" from allele2_PARP1
+      allele2_PARP1_chr1 = str_extract(allele2_PARP1, "chr1:(226402370|226402371):[A-Z/]+"),
+      
+      # Calculate the difference for allele1_PARP1 only if "chr1:226402370" or "chr1:226402371" exists
+      len_diff_allele1 = if_else(!is.na(allele1_PARP1_chr1),
+                                 nchar(str_extract(allele1_PARP1_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                                 nchar(str_extract(allele1_PARP1_chr1, "(?<=/)[A-Z]+")),
+                                 0),  # Set to NA if neither position is present
+      
+      # Calculate the difference for allele2_PARP1 only if "chr1:226402370" or "chr1:226402371" exists
+      len_diff_allele2 = if_else(!is.na(allele2_PARP1_chr1),
+                                 nchar(str_extract(allele2_PARP1_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                                 nchar(str_extract(allele2_PARP1_chr1, "(?<=/)[A-Z]+")),
+                                 0),  # Set to NA if neither position is present
+      
+      # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+    ungroup() %>% filter(insertion == T) %>% select(c("allele1_PARP1", "allele2_PARP1", "n"))
+
+  #count number of deletions spanning chr1:226402370 - chr1:226402371
+  df_PARP1_deletion <- df %>%  mutate(# Calculate the difference in bases on allele1_PARP1 after editing
+      len_diff_allele1 = if_else(!is.na(allele1_PARP1),
+                                 nchar(str_extract(allele1_PARP1, "(?<=:)[A-Z]+(?=/)")) - 
+                                 nchar(str_extract(allele1_PARP1, "(?<=/)[A-Z]+")),
+                                 0),  # Set to NA if neither position is present
+      
+      # Calculate the difference in bases on allele2_PARP1 after editing
+      len_diff_allele2 = if_else(!is.na(allele2_PARP1),
+                                 nchar(str_extract(allele2_PARP1, "(?<=:)[A-Z]+(?=/)")) - 
+                                 nchar(str_extract(allele2_PARP1, "(?<=/)[A-Z]+")),
+                                 NA),  # Set to NA if neither position is present
+      
+      # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+    mutate(position_allele1_start = str_extract(allele1_PARP1, "(?<=chr1:)\\d+")) %>% 
+    mutate(position_allele2_start = str_extract(allele2_PARP1, "(?<=chr1:)\\d+")) %>% 
+    transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+    transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+    mutate(
+      allele1_deletion_spans = (position_allele1_start <= 226402370 & position_allele1_end >= 226402370 | position_allele1_start <= 226402371 & position_allele1_end >= 226402371),
+      allele2_deletion_spans = (position_allele2_start <= 226402370 & position_allele2_end >= 226402370 | position_allele2_start <= 226402371 & position_allele2_end >= 226402371)
+    ) %>% filter(allele1_deletion_spans == T | allele2_deletion_spans == T) %>% select(c("allele1_PARP1", "allele2_PARP1", "n"))
+
+#bind the dataframes together to get the indels
+df_PARP1_indels <- rbind(df_PARP1_insertion, df_PARP1_deletion)
+
+#make a dataframe of all on target PARP1 edits
+df_PARP1_on_target <- rbind(df_PARP1_LOH,df_PARP1_WT1, df_PARP1_WT2, df_PARP1_indels)
+
+#make unique to make sure same cells are not counted multiple times
+df_PARP1_on_target <- unique(df_PARP1_on_target[,c('allele1_PARP1','allele2_PARP1', 'n')])
+
+#write output Excels
+write.xlsx(df_PARP1_on_target, "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/PARP1_on_target_editing.xlsx")
+write.xlsx(df_PARP1_LOH, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/PARP1_LOH_on_target_editing.xlsx")
+write.xlsx(df_PARP1_WT1, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/PARP1_WT1_on_target_editing.xlsx")
+write.xlsx(df_PARP1_WT2, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/PARP1_WT2_on_target_editing.xlsx")
+write.xlsx(df_PARP1_indels, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/PARP1_indel_on_target_editing.xlsx")
+
+#identify mixed cells for PARP1-indels
+#PARP1-indel / PARP1-loh
+df_PARP1_indel_LOH <- df_PARP1_indels %>% filter(allele1_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']" | allele2_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']")
+#PARP1-indel / PARP1-WT1
+df_PARP1_indel_WT1 <- df_PARP1_indels %>% filter(allele1_PARP1 == "['chr1:226402368:A/G']" | allele2_PARP1 == "['chr1:226402368:A/G']")
+#PARP1-indel / PARP1-WT2
+df_PARP1_indel_WT2 <- df_PARP1_indels %>% filter(allele1_PARP1 == "['chr1:226402365:A/G']" | allele2_PARP1 == "['chr1:226402365:A/G']")
+
+#combine in a single dataframe
+df_PARP1_on_target_mixed <- rbind(df_PARP1_indel_LOH, df_PARP1_indel_WT1, df_PARP1_indel_WT2)
+
+#write output in an Excel
+write.xlsx(df_PARP1_on_target_mixed, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/PARP1_mixed_on_target_editing.xlsx")
+```
+
+```{r}
+#Read in BRCA2 output from Mosaic
+BRCA2 <- read.csv2("Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2_BRCA2.txt", sep = ",")
+
+#Read in PARP1 output from Mosaic
+PARP1 <- read.csv2("Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2_PARP1.txt", sep = ",")
+
+#rename the alleles with the amplicon target
+BRCA2 <- rename(BRCA2, "allele1_BRCA2" = allele1)
+BRCA2 <- rename(BRCA2, "allele2_BRCA2" = allele2)
+PARP1 <- rename(PARP1, "allele1_PARP1" = allele1)
+PARP1 <- rename(PARP1, "allele2_PARP1" = allele2)
+
+#combine the dataframes into one, containing information of both variants for each cell
+df <- cbind(BRCA2, PARP1 %>% select(-X))
+
+#remove all the cells that didn't pass QC on one or more alleles (thus, variant called as [None])
+df <- df %>% filter(allele1_BRCA2 != "[None]") %>% filter(allele2_BRCA2 != "[None]") %>% filter(allele1_PARP1 != "[None]") %>% filter(allele2_PARP1 != "[None]")
+
+#count all unique combinations of varients on the BRCA2 loci and PARP1 loci
+df <- df %>% group_by(allele1_BRCA2, allele2_BRCA2, allele1_PARP1, allele2_PARP1) %>% count(allele1_BRCA2, allele2_BRCA2, allele1_PARP1, allele2_PARP1, sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+df <- df %>% filter(allele1_BRCA2 == "['chr13:32326553:GAT/G']" | allele2_BRCA2 == "['chr13:32326553:GAT/G']")
+
+#all cells that contains at least one  deletion of chr13:32326554-32326555
+sum(df$n)
+
+#write an excel with all combination of variants across the two loci
+write.xlsx(df, "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/combination_of_variants_total.xlsx")
+```
+
+
+_BRCA2 LOH_
+Firstly, we look into cells that are BRCA2-disease variant (del) / BRCA2-LOH
+
+#BRCA2 LOH x PARP-LOHx2
+```{r}
+#select all BRCA2-del / BRCA2-LOH cells
+df_BRCA2_LOH <- df %>% filter(allele1_BRCA2 == "['chr13:32326556:A/T', 'chr13:32326557:T/A']" | allele2_BRCA2 == "['chr13:32326556:A/T', 'chr13:32326557:T/A']")
+
+#now select based on PARP1 genotypes
+
+  #PARP1-LOH/PARP1-LOH
+df_BRCA2_LOH_PARP1_LOH_x2 <- df_BRCA2_LOH %>% filter(allele1_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']" & allele2_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']")
+
+#number of cells
+sum(df_BRCA2_LOH_PARP1_LOH_x2$n)
+#write an excel of the combinations
+write.xlsx(df_BRCA2_LOH_PARP1_LOH_x2, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/df_BRCA2_LOH_PARP1_LOH_x2.xlsx")
+```
+
+#BRCA2 LOH x PARP-LOH-WT1
+```{r}
+  #PARP1-LOH/PARP1-WT1
+df_BRCA2_LOH_PARP1_LOH_WT1 <- df_BRCA2_LOH %>% filter(allele1_PARP1 == "['chr1:226402368:A/G']" | allele2_PARP1 == "['chr1:226402368:A/G']") %>% filter(allele1_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']" | allele2_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']")
+
+#number of cells
+sum(df_BRCA2_LOH_PARP1_LOH_WT1$n)
+#write an excel of the combinations
+write.xlsx(df_BRCA2_LOH_PARP1_LOH_WT1, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/df_BRCA2_LOH_PARP1_LOH_WT1.xlsx")
+```
+
+#BRCA2 LOH x PARP-LOH-WT2
+```{r}
+  #PARP1-LOH/PARP1-WT2
+df_BRCA2_LOH_PARP1_LOH_WT2 <- df_BRCA2_LOH %>% filter(allele1_PARP1 == "['chr1:226402365:A/G']" | allele2_PARP1 == "['chr1:226402365:A/G']") %>% filter(allele1_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']" | allele2_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']")
+
+#number of cells
+sum(df_BRCA2_LOH_PARP1_LOH_WT2$n)
+#write an excel of the combinations
+write.xlsx(df_BRCA2_LOH_PARP1_LOH_WT2, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/df_BRCA2_LOH_PARP1_LOH_WT2.xlsx")
+```
+
+BRCA2 LOH Summary table
+```{r}
+BRCA2_LOH <- tibble(genotype = c("BRCA2 LOH x PARP-LOHx2", "BRCA2 LOH x PARP-LOH-WT1", "BRCA2 LOH x PARP-LOH-WT2"),
+       counts = c(sum(df_BRCA2_LOH_PARP1_LOH_x2$n), sum(df_BRCA2_LOH_PARP1_LOH_WT1$n), sum(df_BRCA2_LOH_PARP1_LOH_WT2$n)))
+
+#write the summary table 
+write.xlsx(BRCA2_LOH, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/variant_summary_table_BRCA2_LOH.xlsx")
+```
+
+
+_BRCA2 WT1_
+
+#BRCA2 WT1 x PARP-LOHx2
+```{r}
+#select all BRCA2-del / BRCA2-WT1 cells
+df_BRCA2_WT1 <- df %>% filter(allele1_BRCA2 == "['chr13:32326555:T/C']" | allele2_BRCA2 == "['chr13:32326555:T/C']")
+
+#now select based on PARP1 genotypes
+
+  #PARP1-LOH/PARP1-LOH
+df_BRCA2_WT1_PARP1_LOH_x2 <- df_BRCA2_WT1 %>% filter(allele1_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']" & allele2_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']")
+
+#number of cells
+sum(df_BRCA2_WT1_PARP1_LOH_x2$n)
+#write an excel of the combinations
+write.xlsx(df_BRCA2_WT1_PARP1_LOH_x2, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/df_BRCA2_WT1_PARP1_LOH_x2.xlsx")
+```
+
+#BRCA2 WT1 x PARP-LOH-WT1
+```{r}
+  #PARP1-LOH/PARP1-WT1
+df_BRCA2_WT1_PARP1_LOH_WT1 <- df_BRCA2_WT1 %>% filter(allele1_PARP1 == "['chr1:226402368:A/G']" | allele2_PARP1 == "['chr1:226402368:A/G']") %>% filter(allele1_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']" | allele2_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']")
+
+#number of cells
+sum(df_BRCA2_WT1_PARP1_LOH_WT1$n)
+#write an excel of the combinations
+write.xlsx(df_BRCA2_WT1_PARP1_LOH_WT1, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/df_BRCA2_WT1_PARP1_LOH_WT1.xlsx")
+```
+
+#BRCA2 WT1 x PARP-LOH-WT2
+```{r}
+  #PARP1-LOH/PARP1-WT2
+df_BRCA2_WT1_PARP1_LOH_WT2 <- df_BRCA2_WT1 %>% filter(allele1_PARP1 == "['chr1:226402365:A/G']" | allele2_PARP1 == "['chr1:226402365:A/G']") %>% filter(allele1_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']" | allele2_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']")
+
+#number of cells
+sum(df_BRCA2_WT1_PARP1_LOH_WT2$n)
+#write an excel of the combinations
+write.xlsx(df_BRCA2_WT1_PARP1_LOH_WT2, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/df_BRCA2_WT1_PARP1_LOH_WT2.xlsx")
+```
+
+
+BRCA2 WT1 Summary table
+```{r}
+BRCA2_WT1 <- tibble(genotype = c("BRCA2 WT1 x PARP-LOHx2", "BRCA2 WT1 x PARP-LOH-WT1", "BRCA2 WT1 x PARP-LOH-WT2"),
+       counts = c(sum(df_BRCA2_WT1_PARP1_LOH_x2$n), sum(df_BRCA2_WT1_PARP1_LOH_WT1$n), sum(df_BRCA2_WT1_PARP1_LOH_WT2$n)))
+
+#write the summary table 
+write.xlsx(BRCA2_WT1, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/variant_summary_table_BRCA2_WT1.xlsx")
+```
+
+_BRCA2 WT2_
+
+#BRCA2 WT2 x PARP-LOHx2
+```{r}
+#select all BRCA2-del / BRCA2-WT2 cells
+df_BRCA2_WT2 <- df %>% filter(allele1_BRCA2 == "['chr13:32326561:T/C']" | allele2_BRCA2 == "['chr13:32326561:T/C']")
+
+#now select based on PARP1 genotypes
+
+  #PARP1-LOH/PARP1-LOH
+df_BRCA2_WT2_PARP1_LOH_x2 <- df_BRCA2_WT2 %>% filter(allele1_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']" & allele2_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']")
+
+#number of cells
+sum(df_BRCA2_WT2_PARP1_LOH_x2$n)
+#write an excel of the combinations
+write.xlsx(df_BRCA2_WT2_PARP1_LOH_x2, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/df_BRCA2_WT2_PARP1_LOH_x2.xlsx")
+```
+
+#BRCA2 WT2 x PARP-LOH-WT1
+```{r}
+  #PARP1-LOH/PARP1-WT1
+df_BRCA2_WT2_PARP1_LOH_WT1 <- df_BRCA2_WT2 %>% filter(allele1_PARP1 == "['chr1:226402368:A/G']" | allele2_PARP1 == "['chr1:226402368:A/G']") %>% filter(allele1_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']" | allele2_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']")
+
+#number of cells
+sum(df_BRCA2_WT2_PARP1_LOH_WT1$n)
+#write an excel of the combinations
+write.xlsx(df_BRCA2_WT2_PARP1_LOH_WT1, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/df_BRCA2_WT2_PARP1_LOH_WT1.xlsx")
+```
+
+#BRCA2 WT2 x PARP-LOH-WT2
+```{r}
+  #PARP1-LOH/PARP1-WT2
+df_BRCA2_WT2_PARP1_LOH_WT2 <- df_BRCA2_WT2 %>% filter(allele1_PARP1 == "['chr1:226402365:A/G']" | allele2_PARP1 == "['chr1:226402365:A/G']") %>% filter(allele1_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']" | allele2_PARP1 == "['chr1:226402368:A/T', 'chr1:226402369:A/T']")
+
+#number of cells
+sum(df_BRCA2_WT2_PARP1_LOH_WT2$n)
+#write an excel of the combinations
+write.xlsx(df_BRCA2_WT2_PARP1_LOH_WT2, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/df_BRCA2_WT2_PARP1_LOH_WT2.xlsx")
+```
+
+BRCA2 WT2 Summary table
+```{r}
+BRCA2_WT2 <- tibble(genotype = c("BRCA2 WT2 x PARP-LOHx2", "BRCA2 WT2 x PARP-LOH-WT1", "BRCA2 WT2 x PARP-LOH-WT2"),
+       counts = c(sum(df_BRCA2_WT2_PARP1_LOH_x2$n), sum(df_BRCA2_WT2_PARP1_LOH_WT1$n), sum(df_BRCA2_WT2_PARP1_LOH_WT2$n)))
+
+#write the summary table 
+write.xlsx(BRCA2_WT2, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/variant_summary_table_BRCA2_WT2.xlsx")
+```
+
+
+
+_Checking for allele specific editing_
+```{r}
+#read in the BRCA2 output from the variant calling
+BRCA2 <- read.csv2("Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2_BRCA2.txt", sep = ",")
+
+#rename the alleles with the amplicon target
+BRCA2 <- rename(BRCA2, "allele1_BRCA2" = allele1)
+BRCA2 <- rename(BRCA2, "allele2_BRCA2" = allele2)
+
+#remove all the cells that didn't pass QC on all alleles (thus, variant called as [None])
+BRCA2 <- BRCA2 %>% filter(allele1_BRCA2 != "[None]") %>% filter(allele2_BRCA2 != "[None]") %>% select(-X)
+
+#count all unique combinations of variants on the PRAP1 loci and XAF1 loci
+BRCA2 <- BRCA2 %>% group_by(allele1_BRCA2, allele2_BRCA2) %>% count(allele1_BRCA2, allele2_BRCA2, sort = T)
+
+#write out summary table for BRCA2 genotypes
+write.xlsx(BRCA2, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/BRCA2_genotype_combinations.xlsx")
+
+#cells with at least one BRCA2 LOH
+BRCA2_LOH_combinations <- BRCA2 %>% filter(allele1_BRCA2 == "['chr13:32326556:A/T', 'chr13:32326557:T/A']" | allele2_BRCA2 == "['chr13:32326556:A/T', 'chr13:32326557:T/A']")
+
+#write out the table
+write.xlsx(BRCA2_LOH_combinations, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/BRCA2_LOH_combinations.xlsx")
+
+#cells with at least one BRCA2 WT1
+BRCA2_WT1_combinations <- BRCA2 %>% filter(allele1_BRCA2 == "['chr13:32326555:T/C']" | allele2_BRCA2 == "['chr13:32326555:T/C']")
+
+#write out the table
+write.xlsx(BRCA2_WT1_combinations, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/BRCA2_WT1_combinations.xlsx")
+
+#cells with at least one BRCA2 WT2
+BRCA2_WT2_combinations <- BRCA2 %>% filter(allele1_BRCA2 == "['chr13:32326561:T/C']" | allele2_BRCA2 == "['chr13:32326561:T/C']")
+
+#write out the table
+write.xlsx(BRCA2_WT2_combinations, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/R_output/BRCA2_WT2_combinations.xlsx")
+```
+
+
+
+
+__Off targets across all samples amplicons__
+Firstly, all amplicons must be loaded
+
+```{r}
+# Define the folder containing the .txt files
+folder_path <- "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/"
+
+# List all .txt files in the folder
+file_names <- list.files(path = folder_path, pattern = "\\.txt$", full.names = TRUE)
+
+# Loop through each file
+for (file in file_names) {
+  # Extract the base name of the file (without the folder path)
+  base_name <- basename(file)
+  
+  # Extract the portion of the file name after the last underscore and before ".txt"
+  var_name <- sub(".*_(.*)\\.txt$", "\\1", base_name)
+  
+  # Read the .txt file (assuming tab-delimited)
+  file_content <- read.csv2(file, header = TRUE, sep = ",")
+  
+  # Rename columns allele1 and allele2
+  colnames(file_content)[colnames(file_content) == "allele1"] <- paste0("allele1_", var_name)
+  colnames(file_content)[colnames(file_content) == "allele2"] <- paste0("allele2_", var_name)
+  
+  # Assign the content to a variable with the extracted name
+  assign(var_name, file_content)
+}
+
+
+#remove file_content placeholder file
+rm(file_content)
+```
+
+
+_look at off targets in amplicon AMPL1023258_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023258 <- cbind(AMPL1023271, AMPL1023258) %>% select(-X)
+
+#remove all the cells that didn't pass QC (thus, variant called as [None])
+AMPL1023258 <- AMPL1023258[!apply(AMPL1023258, 1, function(row) any(row == "[None]")), ]
+
+#count all unique conbinations of varients on the BRCA2 loci and PARP1 loci
+AMPL1023258 <- AMPL1023258 %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023258, allele2_AMPL1023258) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023258, allele2_AMPL1023258, sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023258 <- AMPL1023258 %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with a insertion including chr1:34177936 - chr1:34177937
+AMPL1023258_insertion <- AMPL1023258 %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr1:34177936" or "chr1:34177937" from allele1_AMPL1023258
+    allele1_AMPL1023258_chr1 = str_extract(allele1_AMPL1023258, "chr1:(34177936|34177937):[A-Z/]+"),
+    # Extract the part containing "chr1:226402370" or "chr1:226402371" from allele2_AMPL1023258
+    allele2_AMPL1023258_chr1 = str_extract(allele2_AMPL1023258, "chr1:(34177936|34177937):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023258 only if "chr1:34177936" or "chr1:34177937" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023258_chr1),
+                               nchar(str_extract(allele1_AMPL1023258_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023258_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023258 only if "chr1:34177936" or "chr1:34177937" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023258_chr1),
+                               nchar(str_extract(allele2_AMPL1023258_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023258_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023258", "allele2_AMPL1023258", "n"))
+
+#count number of deletions spanning chr1:34177936 - chr1:34177937
+AMPL1023258_deletion <- AMPL1023258 %>%  mutate(# Calculate the difference for in bases after editing on AMPL1023258 allele1
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023258),
+                               nchar(str_extract(allele1_AMPL1023258, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023258, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for in bases after editing on AMPL1023258 allele2
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023258),
+                               nchar(str_extract(allele2_AMPL1023258, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023258, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023258, "(?<=chr1:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023258, "(?<=chr1:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 34177936 & position_allele1_end >= 34177936 | position_allele1_start <= 34177937 & position_allele1_end >= 34177937),
+    allele2_deletion_spans = (position_allele2_start <= 34177936 & position_allele2_end >= 34177936 | position_allele2_start <= 34177937 & position_allele2_end >= 34177937)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023258", "allele2_AMPL1023258", "n"))
+
+#bind the dataframes together
+AMPL1023258 <- rbind(AMPL1023258_insertion, AMPL1023258_deletion)
+
+#the number of cells
+sum(AMPL1023258$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023258 <- unique(AMPL1023258[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023258", "allele2_AMPL1023258", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023258, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023258_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023259_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023259  <- cbind(AMPL1023271, AMPL1023259) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023259  <- AMPL1023259 [!apply(AMPL1023259 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique conbinations of varients on the allele1_AMPL1023271 loci and allele1_AMPL1023259 loci
+AMPL1023259  <- AMPL1023259  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023259 , allele2_AMPL1023259 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023259 , allele2_AMPL1023259 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023259  <- AMPL1023259  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including "chr1:43452511" or "chr1:43452512"
+AMPL1023259_insertion <- AMPL1023259  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr1:43452511" or "chr1:43452512" from allele1_AMPL1023259
+    allele1_AMPL1023259_chr1 = str_extract(allele1_AMPL1023259, "chr1:(43452511|43452512):[A-Z/]+"),
+    # Extract the part containing "chr1:43452511" or "chr1:43452512" from allel2_AMPL1023259
+    allele2_AMPL1023259_chr1 = str_extract(allele2_AMPL1023259, "chr1:(43452511|43452512):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023259  only if "chr1:43452511" or "chr1:43452512" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023259_chr1),
+                               nchar(str_extract(allele1_AMPL1023259_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023259_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023259 only if "chr1:43452511" or "chr1:43452512" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023259_chr1),
+                               nchar(str_extract(allele2_AMPL1023259_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023259_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023259", "allele2_AMPL1023259", "n"))
+
+#count number of deletions spanning "chr1:43452511" or "chr1:43452512"
+AMPL1023259_deletion <- AMPL1023259 %>%  mutate(# Calculate the difference in bases for allele1_AMPL1023259
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023259),
+                               nchar(str_extract(allele1_AMPL1023259, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023259, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference in bases for allele2_AMPL1023259
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023259),
+                               nchar(str_extract(allele2_AMPL1023259, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023259, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023259, "(?<=chr1:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023259, "(?<=chr1:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 43452511 & position_allele1_end >= 43452511 | position_allele1_start <= 43452512 & position_allele1_end >= 43452512),
+    allele2_deletion_spans = (position_allele2_start <= 43452511 & position_allele2_end >= 43452511 | position_allele2_start <= 43452512 & position_allele2_end >= 43452512)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023259", "allele2_AMPL1023259", "n"))
+
+#bind the dataframes together
+AMPL1023259  <- rbind(AMPL1023259_insertion, AMPL1023259_deletion)
+
+#the number of cells
+sum(AMPL1023259$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023259 <- unique(AMPL1023259[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023259", "allele2_AMPL1023259", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023259, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023259_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023260_ 
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023260  <- cbind(AMPL1023271, AMPL1023260) %>% select(-X)
+
+#remove all the cells that didn't pass on at least one allele QC (thus, variant called as [None])
+AMPL1023260  <- AMPL1023260 [!apply(AMPL1023260 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and allele1_AMPL1023260 loci
+AMPL1023260  <- AMPL1023260  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023260 , allele2_AMPL1023260 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023260 , allele2_AMPL1023260 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023260  <- AMPL1023260  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including "chr1:44221167" or "chr1:44221168"
+AMPL1023260_insertion <- AMPL1023260  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr1:44221167" or "chr1:44221168" from allele1_AMPL1023260
+    allele1_AMPL1023260_chr1 = str_extract(allele1_AMPL1023260, "chr1:(44221167|44221168):[A-Z/]+"),
+    # Extract the part containing "chr1:44221167" or "chr1:44221168" from allel2_AMPL1023260
+    allele2_AMPL1023260_chr1 = str_extract(allele2_AMPL1023260, "chr1:(44221167|44221168):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023260  only if "chr1:44221167" or "chr1:44221168" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023260_chr1),
+                               nchar(str_extract(allele1_AMPL1023260_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023260_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023260 only if "chr1:44221167" or "chr1:44221168" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023260_chr1),
+                               nchar(str_extract(allele2_AMPL1023260_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023260_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023260", "allele2_AMPL1023260", "n"))
+
+#count number of deletions spanning "chr1:44221167" or "chr1:44221168"
+AMPL1023260_deletion <- AMPL1023260 %>%  mutate(# Calculate the difference in bases allele1_AMPL1023260
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023260),
+                               nchar(str_extract(allele1_AMPL1023260, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023260, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference in bases allele2_AMPL1023260
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023260),
+                               nchar(str_extract(allele2_AMPL1023260, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023260, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023260, "(?<=chr1:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023260, "(?<=chr1:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 44221167 & position_allele1_end >= 44221167 | position_allele1_start <= 44221168 & position_allele1_end >= 44221168),
+    allele2_deletion_spans = (position_allele2_start <= 44221167 & position_allele2_end >= 44221167 | position_allele2_start <= 44221168 & position_allele2_end >= 44221168)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023260", "allele2_AMPL1023260", "n"))
+
+#bind the dataframes together
+AMPL1023260  <- rbind(AMPL1023260_insertion, AMPL1023260_deletion)
+
+#the number of cells
+sum(AMPL1023260$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023260 <- unique(AMPL1023260[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023260", "allele2_AMPL1023260", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023260, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023260_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023261_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023261  <- cbind(AMPL1023271, AMPL1023261) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023261  <- AMPL1023261 [!apply(AMPL1023261 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the allele1_AMPL1023271 loci and allele1_AMPL1023261 loci
+AMPL1023261  <- AMPL1023261  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023261 , allele2_AMPL1023261 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023261 , allele2_AMPL1023261 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023261  <- AMPL1023261  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr1:157283072 - chr1:157283073
+AMPL1023261_insertion <- AMPL1023261  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr1:157283072" or "chr1:157283073" from allele1_AMPL1023261
+    allele1_AMPL1023261_chr1 = str_extract(allele1_AMPL1023261, "chr1:(157283072|157283073):[A-Z/]+"),
+    # Extract the part containing "chr1:157283072" or "chr1:157283073" from allel2_AMPL1023261
+    allele2_AMPL1023261_chr1 = str_extract(allele2_AMPL1023261, "chr1:(157283072|157283073):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023261  only if "chr1:157283072" or "chr1:157283073" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023261_chr1),
+                               nchar(str_extract(allele1_AMPL1023261_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023261_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023261 only if "chr1:157283072" or "chr1:157283073" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023261_chr1),
+                               nchar(str_extract(allele2_AMPL1023261_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023261_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023261", "allele2_AMPL1023261", "n"))
+
+#count number of deletions spanning chr1:157283072 - chr1:157283073
+AMPL1023261_deletion <- AMPL1023261 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023261
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023261),
+                               nchar(str_extract(allele1_AMPL1023261, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023261, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023261
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023261),
+                               nchar(str_extract(allele2_AMPL1023261, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023261, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023261, "(?<=chr1:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023261, "(?<=chr1:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 157283072 & position_allele1_end >= 157283072 | position_allele1_start <= 157283073 & position_allele1_end >= 157283073),
+    allele2_deletion_spans = (position_allele2_start <= 157283072 & position_allele2_end >= 157283072 | position_allele2_start <= 157283073 & position_allele2_end >= 157283073)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023261", "allele2_AMPL1023261", "n"))
+
+#bind the dataframes together
+AMPL1023261  <- rbind(AMPL1023261_insertion, AMPL1023261_deletion)
+
+#the number of cells
+sum(AMPL1023261$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023261 <- unique(AMPL1023261[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023261", "allele2_AMPL1023261", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023261, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023261_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023263_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023263  <- cbind(AMPL1023271, AMPL1023263) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele(thus, variant called as [None])
+AMPL1023263  <- AMPL1023263 [!apply(AMPL1023263 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the allele2_AMPL1023271 loci and allele2_AMPL1023263 loci
+AMPL1023263  <- AMPL1023263  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023263 , allele2_AMPL1023263 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023263 , allele2_AMPL1023263 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023263  <- AMPL1023263  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with insertion including chr1:247123143 - chr1:247123144
+AMPL1023263_insertion <- AMPL1023263  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr1:247123143" or "chr1:247123144" from allele1_AMPL1023263
+    allele1_AMPL1023263_chr1 = str_extract(allele1_AMPL1023263, "chr1:(247123143|247123144):[A-Z/]+"),
+    # Extract the part containing "chr1:247123143" or "chr1:247123144" from allel2_AMPL1023263
+    allele2_AMPL1023263_chr1 = str_extract(allele2_AMPL1023263, "chr1:(247123143|247123144):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023263  only if "chr1:247123143" or "chr1:247123144" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023263_chr1),
+                               nchar(str_extract(allele1_AMPL1023263_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023263_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023263 only if "chr1:247123143" or "chr1:247123144" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023263_chr1),
+                               nchar(str_extract(allele2_AMPL1023263_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023263_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023263", "allele2_AMPL1023263", "n"))
+
+#count number of deletions spanning chr1:247123143 - chr1:247123144
+AMPL1023263_deletion <- AMPL1023263 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023263
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023263),
+                               nchar(str_extract(allele1_AMPL1023263, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023263, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023263
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023263),
+                               nchar(str_extract(allele2_AMPL1023263, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023263, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023263, "(?<=chr1:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023263, "(?<=chr1:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 247123143 & position_allele1_end >= 247123143 | position_allele1_start <= 247123144 & position_allele1_end >= 247123144),
+    allele2_deletion_spans = (position_allele2_start <= 247123143 & position_allele2_end >= 247123143 | position_allele2_start <= 247123144 & position_allele2_end >= 247123144)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023263", "allele2_AMPL1023263", "n"))
+
+#bind the dataframes together
+AMPL1023263  <- rbind(AMPL1023263_insertion, AMPL1023263_deletion)
+
+#the number of cells
+sum(AMPL1023263$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023263 <- unique(AMPL1023263[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023263", "allele2_AMPL1023263", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023263, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023263_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023264_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023264  <- cbind(AMPL1023271, AMPL1023264) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023264  <- AMPL1023264 [!apply(AMPL1023264 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023264 loci
+AMPL1023264  <- AMPL1023264  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023264 , allele2_AMPL1023264 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023264 , allele2_AMPL1023264 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023264  <- AMPL1023264  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr2:15308246 - chr2:15308247
+AMPL1023264_insertion <- AMPL1023264  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr2:15308246" or "chr2:15308247" from allele1_AMPL1023264
+    allele1_AMPL1023264_chr1 = str_extract(allele1_AMPL1023264, "chr2:(15308246|15308247):[A-Z/]+"),
+    # Extract the part containing "chr2:15308246" or "chr2:15308247" from allel2_AMPL1023264
+    allele2_AMPL1023264_chr1 = str_extract(allele2_AMPL1023264, "chr2:(15308246|15308247):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023264  only if "chr2:15308246" or "chr2:15308247" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023264_chr1),
+                               nchar(str_extract(allele1_AMPL1023264_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023264_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023264 only if "chr2:15308246" or "chr2:15308247" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023264_chr1),
+                               nchar(str_extract(allele2_AMPL1023264_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023264_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023264", "allele2_AMPL1023264", "n"))
+
+#count number of deletions spanning chr2:15308246 - chr2:15308247
+AMPL1023264_deletion <- AMPL1023264 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023264
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023264),
+                               nchar(str_extract(allele1_AMPL1023264, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023264, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023264
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023264),
+                               nchar(str_extract(allele2_AMPL1023264, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023264, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023264, "(?<=chr2:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023264, "(?<=chr2:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 15308246 & position_allele1_end >= 15308246 | position_allele1_start <= 15308247 & position_allele1_end >= 15308247),
+    allele2_deletion_spans = (position_allele2_start <= 15308246 & position_allele2_end >= 15308246 | position_allele2_start <= 15308247 & position_allele2_end >= 15308247)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023264", "allele2_AMPL1023264", "n"))
+
+#bind the dataframes together
+AMPL1023264  <- rbind(AMPL1023264_insertion, AMPL1023264_deletion)
+
+#the number of cells
+sum(AMPL1023264$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023264 <- unique(AMPL1023264[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023264", "allele2_AMPL1023264", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023264, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023264_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023265_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023265  <- cbind(AMPL1023271, AMPL1023265) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023265  <- AMPL1023265 [!apply(AMPL1023265 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023265 loci
+AMPL1023265  <- AMPL1023265  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023265 , allele2_AMPL1023265 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023265 , allele2_AMPL1023265 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023265  <- AMPL1023265  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr3:37822832 - chr3:37822833
+AMPL1023265_insertion <- AMPL1023265  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr3:37822832" or "chr3:37822833" from allele1_AMPL1023265
+    allele1_AMPL1023265_chr1 = str_extract(allele1_AMPL1023265, "chr3:(37822832|37822833):[A-Z/]+"),
+    # Extract the part containing "chr3:37822832" or "chr3:37822833" from allel2_AMPL1023265
+    allele2_AMPL1023265_chr1 = str_extract(allele2_AMPL1023265, "chr3:(37822832|37822833):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023265  only if "chr3:37822832" or "chr3:37822833" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023265_chr1),
+                               nchar(str_extract(allele1_AMPL1023265_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023265_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023265 only if "chr3:37822832" or "chr3:37822833" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023265_chr1),
+                               nchar(str_extract(allele2_AMPL1023265_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023265_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023265", "allele2_AMPL1023265", "n"))
+
+#count number of deletions spanning chr3:37822832 - chr3:37822833
+AMPL1023265_deletion <- AMPL1023265 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023265
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023265),
+                               nchar(str_extract(allele1_AMPL1023265, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023265, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023265
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023265),
+                               nchar(str_extract(allele2_AMPL1023265, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023265, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023265, "(?<=chr3:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023265, "(?<=chr3:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 37822832 & position_allele1_end >= 37822832 | position_allele1_start <= 37822833 & position_allele1_end >= 37822833),
+    allele2_deletion_spans = (position_allele2_start <= 37822832 & position_allele2_end >= 37822832 | position_allele2_start <= 37822833 & position_allele2_end >= 37822833)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023265", "allele2_AMPL1023265", "n"))
+
+#bind the dataframes together
+AMPL1023265  <- rbind(AMPL1023265_insertion, AMPL1023265_deletion)
+
+#the number of cells
+sum(AMPL1023265$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023265 <- unique(AMPL1023265[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023265", "allele2_AMPL1023265", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023265, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023265_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023266_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023266  <- cbind(AMPL1023271, AMPL1023266) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023266  <- AMPL1023266 [!apply(AMPL1023266 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023266 loci
+AMPL1023266  <- AMPL1023266  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023266 , allele2_AMPL1023266 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023266 , allele2_AMPL1023266 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023266  <- AMPL1023266  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr4:55429420 - chr4:55429421
+AMPL1023266_insertion <- AMPL1023266  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr4:55429420" or "chr4:55429421" from allele1_AMPL1023266
+    allele1_AMPL1023266_chr1 = str_extract(allele1_AMPL1023266, "chr4:(55429420|55429421):[A-Z/]+"),
+    # Extract the part containing "chr4:55429420" or "chr4:55429421" from allel2_AMPL1023266
+    allele2_AMPL1023266_chr1 = str_extract(allele2_AMPL1023266, "chr4:(55429420|55429421):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023266  only if "chr4:55429420" or "chr4:55429421" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023266_chr1),
+                               nchar(str_extract(allele1_AMPL1023266_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023266_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023266 only if "chr4:55429420" or "chr4:55429421" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023266_chr1),
+                               nchar(str_extract(allele2_AMPL1023266_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023266_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023266", "allele2_AMPL1023266", "n"))
+
+#count number of deletions spanning chr4:55429420 - chr4:55429421
+AMPL1023266_deletion <- AMPL1023266 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023266
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023266),
+                               nchar(str_extract(allele1_AMPL1023266, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023266, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023266
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023266),
+                               nchar(str_extract(allele2_AMPL1023266, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023266, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023266, "(?<=chr4:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023266, "(?<=chr4:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 55429420 & position_allele1_end >= 55429420 | position_allele1_start <= 55429421 & position_allele1_end >= 55429421),
+    allele2_deletion_spans = (position_allele2_start <= 55429420 & position_allele2_end >= 55429420 | position_allele2_start <= 55429421 & position_allele2_end >= 55429421)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023266", "allele2_AMPL1023266", "n"))
+
+#bind the dataframes together
+AMPL1023266  <- rbind(AMPL1023266_insertion, AMPL1023266_deletion)
+
+#the number of cells
+sum(AMPL1023266$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023266 <- unique(AMPL1023266[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023266", "allele2_AMPL1023266", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023266, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023266_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023267_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023267  <- cbind(AMPL1023271, AMPL1023267) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023267  <- AMPL1023267 [!apply(AMPL1023267 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023267 loci
+AMPL1023267  <- AMPL1023267  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023267 , allele2_AMPL1023267 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023267 , allele2_AMPL1023267 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023267  <- AMPL1023267  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr5:53092008 - chr5:53092009
+AMPL1023267_insertion <- AMPL1023267  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr5:53092008" or "chr5:53092009" from allele1_AMPL1023267
+    allele1_AMPL1023267_chr1 = str_extract(allele1_AMPL1023267, "chr5:(53092008|53092009):[A-Z/]+"),
+    # Extract the part containing "chr5:53092008" or "chr5:53092009" from allel2_AMPL1023267
+    allele2_AMPL1023267_chr1 = str_extract(allele2_AMPL1023267, "chr5:(53092008|53092009):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023267  only if "chr5:53092008" or "chr5:53092009" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023267_chr1),
+                               nchar(str_extract(allele1_AMPL1023267_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023267_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023267 only if "chr5:53092008" or "chr5:53092009" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023267_chr1),
+                               nchar(str_extract(allele2_AMPL1023267_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023267_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023267", "allele2_AMPL1023267", "n"))
+
+#count number of deletions spanning chr5:53092008 - chr5:53092009
+AMPL1023267_deletion <- AMPL1023267 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023267
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023267),
+                               nchar(str_extract(allele1_AMPL1023267, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023267, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023267
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023267),
+                               nchar(str_extract(allele2_AMPL1023267, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023267, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023267, "(?<=chr5:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023267, "(?<=chr5:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 53092008 & position_allele1_end >= 53092008 | position_allele1_start <= 53092009 & position_allele1_end >= 53092009),
+    allele2_deletion_spans = (position_allele2_start <= 53092008 & position_allele2_end >= 53092008 | position_allele2_start <= 53092009 & position_allele2_end >= 53092009)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023267", "allele2_AMPL1023267", "n"))
+
+#bind the dataframes together
+AMPL1023267  <- rbind(AMPL1023267_insertion, AMPL1023267_deletion)
+
+#the number of cells
+sum(AMPL1023267$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023267 <- unique(AMPL1023267[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023267", "allele2_AMPL1023267", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023267, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023267_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023268_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023268  <- cbind(AMPL1023271, AMPL1023268) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023268  <- AMPL1023268 [!apply(AMPL1023268 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023268 loci
+AMPL1023268  <- AMPL1023268  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023268 , allele2_AMPL1023268 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023268 , allele2_AMPL1023268 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023268  <- AMPL1023268  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr7:138076435 - chr7:138076436
+AMPL1023268_insertion <- AMPL1023268  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr7:138076435" or "chr7:138076436" from allele1_AMPL1023268
+    allele1_AMPL1023268_chr1 = str_extract(allele1_AMPL1023268, "chr7:(138076435|138076436):[A-Z/]+"),
+    # Extract the part containing "chr7:138076435" or "chr7:138076436" from allel2_AMPL1023268
+    allele2_AMPL1023268_chr1 = str_extract(allele2_AMPL1023268, "chr7:(138076435|138076436):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023268  only if "chr7:138076435" or "chr7:138076436" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023268_chr1),
+                               nchar(str_extract(allele1_AMPL1023268_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023268_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023268 only if "chr7:138076435" or "chr7:138076436" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023268_chr1),
+                               nchar(str_extract(allele2_AMPL1023268_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023268_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023268", "allele2_AMPL1023268", "n"))
+
+#count number of deletions spanning chr7:138076435 - chr7:138076436
+AMPL1023268_deletion <- AMPL1023268 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023268
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023268),
+                               nchar(str_extract(allele1_AMPL1023268, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023268, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023268
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023268),
+                               nchar(str_extract(allele2_AMPL1023268, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023268, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023268, "(?<=chr7:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023268, "(?<=chr7:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 138076435 & position_allele1_end >= 138076435 | position_allele1_start <= 138076436 & position_allele1_end >= 138076436),
+    allele2_deletion_spans = (position_allele2_start <= 138076435 & position_allele2_end >= 138076435 | position_allele2_start <= 138076436 & position_allele2_end >= 138076436)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023268", "allele2_AMPL1023268", "n"))
+
+#bind the dataframes together
+AMPL1023268  <- rbind(AMPL1023268_insertion, AMPL1023268_deletion)
+
+#the number of cells
+sum(AMPL1023268$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023268 <- unique(AMPL1023268[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023268", "allele2_AMPL1023268", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023268, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023268_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023269_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023269  <- cbind(AMPL1023271, AMPL1023269) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023269  <- AMPL1023269 [!apply(AMPL1023269 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023269 loci
+AMPL1023269  <- AMPL1023269  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023269 , allele2_AMPL1023269 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023269 , allele2_AMPL1023269 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023269  <- AMPL1023269  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr7:149749879 - chr7:149749880
+AMPL1023269_insertion <- AMPL1023269  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr7:149749879" or "chr7:149749880" from allele1_AMPL1023269
+    allele1_AMPL1023269_chr1 = str_extract(allele1_AMPL1023269, "chr7:(149749879|149749880):[A-Z/]+"),
+    # Extract the part containing "chr7:149749879" or "chr7:149749880" from allel2_AMPL1023269
+    allele2_AMPL1023269_chr1 = str_extract(allele2_AMPL1023269, "chr7:(149749879|149749880):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023269  only if "chr7:149749879" or "chr7:149749880" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023269_chr1),
+                               nchar(str_extract(allele1_AMPL1023269_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023269_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023269 only if "chr7:149749879" or "chr7:149749880" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023269_chr1),
+                               nchar(str_extract(allele2_AMPL1023269_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023269_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023269", "allele2_AMPL1023269", "n"))
+
+#count number of deletions spanning chr7:149749879 - chr7:149749880
+AMPL1023269_deletion <- AMPL1023269 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023269
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023269),
+                               nchar(str_extract(allele1_AMPL1023269, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023269, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023269
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023269),
+                               nchar(str_extract(allele2_AMPL1023269, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023269, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023269, "(?<=chr7:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023269, "(?<=chr7:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 149749879 & position_allele1_end >= 149749879 | position_allele1_start <= 149749880 & position_allele1_end >= 149749880),
+    allele2_deletion_spans = (position_allele2_start <= 149749879 & position_allele2_end >= 149749879 | position_allele2_start <= 149749880 & position_allele2_end >= 149749880)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023269", "allele2_AMPL1023269", "n"))
+
+#bind the dataframes together
+AMPL1023269  <- rbind(AMPL1023269_insertion, AMPL1023269_deletion)
+
+#the number of cells
+sum(AMPL1023269$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023269 <- unique(AMPL1023269[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023269", "allele2_AMPL1023269", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023269, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023269_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023270_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023270  <- cbind(AMPL1023271, AMPL1023270) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023270  <- AMPL1023270 [!apply(AMPL1023270 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023270 loci
+AMPL1023270  <- AMPL1023270  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023270 , allele2_AMPL1023270 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023270 , allele2_AMPL1023270 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023270  <- AMPL1023270  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr12:26494136 - chr12:26494137
+AMPL1023270_insertion <- AMPL1023270  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr12:26494136" or "chr12:26494137" from allele1_AMPL1023270
+    allele1_AMPL1023270_chr1 = str_extract(allele1_AMPL1023270, "chr12:(26494136|26494137):[A-Z/]+"),
+    # Extract the part containing "chr12:26494136" or "chr12:26494137" from allel2_AMPL1023270
+    allele2_AMPL1023270_chr1 = str_extract(allele2_AMPL1023270, "chr12:(26494136|26494137):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023270  only if "chr12:26494136" or "chr12:26494137" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023270_chr1),
+                               nchar(str_extract(allele1_AMPL1023270_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023270_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023270 only if "chr12:26494136" or "chr12:26494137" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023270_chr1),
+                               nchar(str_extract(allele2_AMPL1023270_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023270_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023270", "allele2_AMPL1023270", "n"))
+
+#count number of deletions spanning chr12:26494136 - chr12:26494137
+AMPL1023270_deletion <- AMPL1023270 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023270
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023270),
+                               nchar(str_extract(allele1_AMPL1023270, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023270, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023270
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023270),
+                               nchar(str_extract(allele2_AMPL1023270, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023270, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023270, "(?<=chr12:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023270, "(?<=chr12:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 26494136 & position_allele1_end >= 26494136 | position_allele1_start <= 26494137 & position_allele1_end >= 26494137),
+    allele2_deletion_spans = (position_allele2_start <= 26494136 & position_allele2_end >= 26494136 | position_allele2_start <= 26494137 & position_allele2_end >= 26494137)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023270", "allele2_AMPL1023270", "n"))
+
+#bind the dataframes together
+AMPL1023270  <- rbind(AMPL1023270_insertion, AMPL1023270_deletion)
+
+#the number of cells
+sum(AMPL1023270$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023270 <- unique(AMPL1023270[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023270", "allele2_AMPL1023270", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023270, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023270_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023273_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023273  <- cbind(AMPL1023271, AMPL1023273) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023273  <- AMPL1023273 [!apply(AMPL1023273 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023273 loci
+AMPL1023273  <- AMPL1023273  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023273 , allele2_AMPL1023273 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023273 , allele2_AMPL1023273 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023273  <- AMPL1023273  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr15:43771262 - chr15:43771263
+AMPL1023273_insertion <- AMPL1023273  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr15:43771262" or "chr15:43771263" from allele1_AMPL1023273
+    allele1_AMPL1023273_chr1 = str_extract(allele1_AMPL1023273, "chr15:(43771262|43771263):[A-Z/]+"),
+    # Extract the part containing "chr15:43771262" or "chr15:43771263" from allel2_AMPL1023273
+    allele2_AMPL1023273_chr1 = str_extract(allele2_AMPL1023273, "chr15:(43771262|43771263):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023273  only if "chr15:43771262" or "chr15:43771263" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023273_chr1),
+                               nchar(str_extract(allele1_AMPL1023273_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023273_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023273 only if "chr15:43771262" or "chr15:43771263" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023273_chr1),
+                               nchar(str_extract(allele2_AMPL1023273_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023273_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023273", "allele2_AMPL1023273", "n"))
+
+#count number of deletions spanning chr15:43771262 - chr15:43771263
+AMPL1023273_deletion <- AMPL1023273 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023273
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023273),
+                               nchar(str_extract(allele1_AMPL1023273, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023273, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023273
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023273),
+                               nchar(str_extract(allele2_AMPL1023273, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023273, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023273, "(?<=chr15:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023273, "(?<=chr15:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 43771262 & position_allele1_end >= 43771262 | position_allele1_start <= 43771263 & position_allele1_end >= 43771263),
+    allele2_deletion_spans = (position_allele2_start <= 43771262 & position_allele2_end >= 43771262 | position_allele2_start <= 43771263 & position_allele2_end >= 43771263)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023273", "allele2_AMPL1023273", "n"))
+
+#bind the dataframes together
+AMPL1023273  <- rbind(AMPL1023273_insertion, AMPL1023273_deletion)
+
+#the number of cells
+sum(AMPL1023273$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023273 <- unique(AMPL1023273[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023273", "allele2_AMPL1023273", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023273, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023273_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023274_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023274  <- cbind(AMPL1023271, AMPL1023274) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023274  <- AMPL1023274 [!apply(AMPL1023274 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023274 loci
+AMPL1023274  <- AMPL1023274  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023274 , allele2_AMPL1023274 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023274 , allele2_AMPL1023274 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023274  <- AMPL1023274  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr16:11120721 - chr16:11120722
+AMPL1023274_insertion <- AMPL1023274  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr16:11120721" or "chr16:11120722" from allele1_AMPL1023274
+    allele1_AMPL1023274_chr1 = str_extract(allele1_AMPL1023274, "chr16:(11120721|11120722):[A-Z/]+"),
+    # Extract the part containing "chr16:11120721" or "chr16:11120722" from allel2_AMPL1023274
+    allele2_AMPL1023274_chr1 = str_extract(allele2_AMPL1023274, "chr16:(11120721|11120722):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023274  only if "chr16:11120721" or "chr16:11120722" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023274_chr1),
+                               nchar(str_extract(allele1_AMPL1023274_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023274_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023274 only if "chr16:11120721" or "chr16:11120722" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023274_chr1),
+                               nchar(str_extract(allele2_AMPL1023274_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023274_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023274", "allele2_AMPL1023274", "n"))
+
+#count number of deletions spanning chr16:11120721 - chr16:11120722
+AMPL1023274_deletion <- AMPL1023274 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023274
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023274),
+                               nchar(str_extract(allele1_AMPL1023274, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023274, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023274
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023274),
+                               nchar(str_extract(allele2_AMPL1023274, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023274, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023274, "(?<=chr16:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023274, "(?<=chr16:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 11120721 & position_allele1_end >= 11120721 | position_allele1_start <= 11120722 & position_allele1_end >= 11120722),
+    allele2_deletion_spans = (position_allele2_start <= 11120721 & position_allele2_end >= 11120721 | position_allele2_start <= 11120722 & position_allele2_end >= 11120722)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023274", "allele2_AMPL1023274", "n"))
+
+#bind the dataframes together
+AMPL1023274  <- rbind(AMPL1023274_insertion, AMPL1023274_deletion)
+
+#the number of cells
+sum(AMPL1023274$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023274 <- unique(AMPL1023274[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023274", "allele2_AMPL1023274", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023274, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023274_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023275_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023275  <- cbind(AMPL1023271, AMPL1023275) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023275  <- AMPL1023275 [!apply(AMPL1023275 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023275 loci
+AMPL1023275  <- AMPL1023275  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023275 , allele2_AMPL1023275 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023275 , allele2_AMPL1023275 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023275  <- AMPL1023275  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr17:9173898 - chr17:9173899
+AMPL1023275_insertion <- AMPL1023275  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr17:9173898" or "chr17:9173899" from allele1_AMPL1023275
+    allele1_AMPL1023275_chr1 = str_extract(allele1_AMPL1023275, "chr17:(9173898|9173899):[A-Z/]+"),
+    # Extract the part containing "chr17:9173898" or "chr17:9173899" from allel2_AMPL1023275
+    allele2_AMPL1023275_chr1 = str_extract(allele2_AMPL1023275, "chr17:(9173898|9173899):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023275  only if "chr17:9173898" or "chr17:9173899" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023275_chr1),
+                               nchar(str_extract(allele1_AMPL1023275_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023275_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023275 only if "chr17:9173898" or "chr17:9173899" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023275_chr1),
+                               nchar(str_extract(allele2_AMPL1023275_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023275_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023275", "allele2_AMPL1023275", "n"))
+
+#count number of deletions spanning chr17:9173898 - chr17:9173899
+AMPL1023275_deletion <- AMPL1023275 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023275
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023275),
+                               nchar(str_extract(allele1_AMPL1023275, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023275, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele1_AMPL1023275
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023275),
+                               nchar(str_extract(allele2_AMPL1023275, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023275, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023275, "(?<=chr17:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023275, "(?<=chr17:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 9173898 & position_allele1_end >= 9173898 | position_allele1_start <= 9173899 & position_allele1_end >= 9173899),
+    allele2_deletion_spans = (position_allele2_start <= 9173898 & position_allele2_end >= 9173898 | position_allele2_start <= 9173899 & position_allele2_end >= 9173899)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023275", "allele2_AMPL1023275", "n"))
+
+#bind the dataframes together
+AMPL1023275  <- rbind(AMPL1023275_insertion, AMPL1023275_deletion)
+
+#the number of cells
+sum(AMPL1023275$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023275 <- unique(AMPL1023275[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023275", "allele2_AMPL1023275", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023275, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023275_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023276_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023276  <- cbind(AMPL1023271, AMPL1023276) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023276  <- AMPL1023276 [!apply(AMPL1023276 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023276 loci
+AMPL1023276  <- AMPL1023276  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023276 , allele2_AMPL1023276 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023276 , allele2_AMPL1023276 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023276  <- AMPL1023276  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chr22:37061109 - chr22:37061110
+AMPL1023276_insertion <- AMPL1023276  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chr22:37061109" or "chr22:37061110" from allele1_AMPL1023276
+    allele1_AMPL1023276_chr1 = str_extract(allele1_AMPL1023276, "chr22:(37061109|37061110):[A-Z/]+"),
+    # Extract the part containing "chr22:37061109" or "chr22:37061110" from allel2_AMPL1023276
+    allele2_AMPL1023276_chr1 = str_extract(allele2_AMPL1023276, "chr22:(37061109|37061110):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023276  only if "chr22:37061109" or "chr22:37061110" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023276_chr1),
+                               nchar(str_extract(allele1_AMPL1023276_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023276_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023276 only if "chr22:37061109" or "chr22:37061110" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023276_chr1),
+                               nchar(str_extract(allele2_AMPL1023276_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023276_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023276", "allele2_AMPL1023276", "n"))
+
+#count number of deletions spanning chr22:37061109 - chr22:37061110
+AMPL1023276_deletion <- AMPL1023276 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023276
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023276),
+                               nchar(str_extract(allele1_AMPL1023276, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023276, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023276
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023276),
+                               nchar(str_extract(allele2_AMPL1023276, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023276, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023276, "(?<=chr22:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023276, "(?<=chr22:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 37061109 & position_allele1_end >= 37061109 | position_allele1_start <= 37061110 & position_allele1_end >= 37061110),
+    allele2_deletion_spans = (position_allele2_start <= 37061109 & position_allele2_end >= 37061109 | position_allele2_start <= 37061110 & position_allele2_end >= 37061110)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023276", "allele2_AMPL1023276", "n"))
+
+#bind the dataframes together
+AMPL1023276  <- rbind(AMPL1023276_insertion, AMPL1023276_deletion)
+
+#the number of cells
+sum(AMPL1023276$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023276 <- unique(AMPL1023276[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023276", "allele2_AMPL1023276", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023276, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023276_indel_off_targets.xlsx")
+```
+
+_look at off targets in amplicon AMPL1023277_
+```{r}
+#merge the dataframe with amplicon AMPL1023271, which contains the BRCA2 variant
+AMPL1023277  <- cbind(AMPL1023271, AMPL1023277) %>% select(-X)
+
+#remove all the cells that didn't pass QC on at least one allele (thus, variant called as [None])
+AMPL1023277  <- AMPL1023277 [!apply(AMPL1023277 , 1, function(row) any(row == "[None]")), ]
+
+#count all unique combinations of variants on the AMPL1023271 loci and AMPL1023277 loci
+AMPL1023277  <- AMPL1023277  %>% group_by(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023277 , allele2_AMPL1023277 ) %>% count(allele1_AMPL1023271, allele2_AMPL1023271, allele1_AMPL1023277 , allele2_AMPL1023277 , sort = T)
+
+#first criteria for all cells of interest is, that one of their BRCA2 alleles _must_ have the deletion of chr13:32326554-32326555
+#Other cells are filtered out from the data frame.
+AMPL1023277  <- AMPL1023277  %>% filter(allele1_AMPL1023271 == "['chr13:32326553:GAT/G']" | allele2_AMPL1023271 == "['chr13:32326553:GAT/G']")
+
+#identify cells with an insertion including chrX:41201253 - chrX:41201254
+AMPL1023277_insertion <- AMPL1023277  %>%
+  rowwise() %>%
+  mutate(
+    # Extract the part containing "chrX:41201253" or "chrX:41201254" from allele1_AMPL1023277
+    allele1_AMPL1023277_chr1 = str_extract(allele1_AMPL1023277, "chrX:(41201253|41201254):[A-Z/]+"),
+    # Extract the part containing "chrX:41201253" or "chrX:41201254" from allel2_AMPL1023277
+    allele2_AMPL1023277_chr1 = str_extract(allele2_AMPL1023277, "chrX:(41201253|41201254):[A-Z/]+"),
+    
+    # Calculate the difference for allele1_AMPL1023277  only if "chrX:41201253" or "chrX:41201254" exists
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023277_chr1),
+                               nchar(str_extract(allele1_AMPL1023277_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023277_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference for allele2_AMPL1023277 only if "chrX:41201253" or "chrX:41201254" exists
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023277_chr1),
+                               nchar(str_extract(allele2_AMPL1023277_chr1, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023277_chr1, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Check if the edit is an insertion
+      insertion = if_else(
+      (len_diff_allele1 <= 0 & len_diff_allele2 <= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  )  %>%
+  ungroup() %>% filter(insertion == T) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023277", "allele2_AMPL1023277", "n"))
+
+#count number of deletions spanning chrX:41201253 - chrX:41201254
+AMPL1023277_deletion <- AMPL1023277 %>%  mutate(# Calculate the difference of bases for allele1_AMPL1023277
+    len_diff_allele1 = if_else(!is.na(allele1_AMPL1023277),
+                               nchar(str_extract(allele1_AMPL1023277, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele1_AMPL1023277, "(?<=/)[A-Z]+")),
+                               0),  # Set to NA if neither position is present
+    
+    # Calculate the difference of bases for allele2_AMPL1023277
+    len_diff_allele2 = if_else(!is.na(allele2_AMPL1023277),
+                               nchar(str_extract(allele2_AMPL1023277, "(?<=:)[A-Z]+(?=/)")) - 
+                               nchar(str_extract(allele2_AMPL1023277, "(?<=/)[A-Z]+")),
+                               NA),  # Set to NA if neither position is present
+    
+    # Check if the edit is a deletion
+    deletion = if_else(
+      (len_diff_allele1 >= 0 & len_diff_allele2 >= 0), 
+      FALSE,  # Set to FALSE if both len_diff_allele1 and len_diff_allele2 are 0  or less (if less it is a deletion)
+      TRUE)
+  ) %>% ungroup() %>% filter(len_diff_allele1 > 0 | len_diff_allele2 > 0) %>% filter(deletion == T) %>% 
+  mutate(position_allele1_start = str_extract(allele1_AMPL1023277, "(?<=chrX:)\\d+")) %>% 
+  mutate(position_allele2_start = str_extract(allele2_AMPL1023277, "(?<=chrX:)\\d+")) %>% 
+  transform(position_allele1_end = as.numeric(position_allele1_start) + len_diff_allele1) %>% 
+  transform(position_allele2_end = as.numeric(position_allele2_start) + len_diff_allele2) %>% 
+  mutate(
+    allele1_deletion_spans = (position_allele1_start <= 41201253 & position_allele1_end >= 41201253 | position_allele1_start <= 41201254 & position_allele1_end >= 41201254),
+    allele2_deletion_spans = (position_allele2_start <= 41201253 & position_allele2_end >= 41201253 | position_allele2_start <= 41201254 & position_allele2_end >= 41201253)
+  ) %>% filter(allele1_deletion_spans == T & len_diff_allele1 > 0 | allele2_deletion_spans == T & len_diff_allele2 > 0) %>% select(c("allele1_AMPL1023271", "allele2_AMPL1023271", "allele1_AMPL1023277", "allele2_AMPL1023277", "n"))
+
+#bind the dataframes together
+AMPL1023277  <- rbind(AMPL1023277_insertion, AMPL1023277_deletion)
+
+#the number of cells
+sum(AMPL1023277$n)
+
+#make unique to make sure same cells are not counted multiple times
+AMPL1023277 <- unique(AMPL1023277[,c('allele1_AMPL1023271','allele2_AMPL1023271', "allele1_AMPL1023277", "allele2_AMPL1023277", 'n')])
+
+#write an excel of the combinations
+write.xlsx(AMPL1023277, file = "Fig4bc-BRCA2-c_574_575del-PARP1-F44_-D12-rep2/off_target_amplicons/excels_off_target/AMPL1023277_indel_off_targets.xlsx")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

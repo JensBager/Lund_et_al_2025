@@ -2,7 +2,7 @@
 This is a repository for the publication "Functional analysis of variants in cancer genes in carrier genomic background using CRISPR-LOH and CRISPR-Select". The scripts used for SCCG variant calling and quantification in Lund _et al.,_ 2025 are freely available and customisable for alternative experimental designs. For technical support contact either jbc53@cam.ac.uk or casper.lund@bric.ku.dk.
 
 # System requirements
-The system requirements including required packages and their versions are outlined `sessionInfo_SCCG_quantification.txt` and `sessionInfo_SCCG_variant_calling.txt`. No non-standard headware is required to run the analyses. The analyses were conducted on an MacBook Air 2022, M2 with 16 GB memory on macOS Ventura 13.0.1.
+The system requirements including required packages and their versions are outlined `sessionInfo_SCCG_quantification.txt` and `sessionInfo_SCCG_variant_calling.txt`. No non-standard herdware is required to run the analyses. The analyses were conducted on a MacBook Air 2022, M2 with 16 GB memory on macOS Ventura 13.0.1.
 
 # Installation guide
 For package installation guide please refer to https://cran.r-project.org/ for R packages and https://pypi.org/ and https://github.com/MissionBio/ for Python packages. Installation vary depending on connection specification, but should complete in minutes.
